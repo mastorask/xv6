@@ -11,6 +11,10 @@ uint ticks;
 
 extern char trampoline[], uservec[];
 
+// mastoras ->>
+extern struct proc proc[NPROC];
+// <<- mastoras
+
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
@@ -167,9 +171,26 @@ clockintr()
   if(cpuid() == 0){
     acquire(&tickslock);
     ticks++;
-    wakeup(&ticks);
-    release(&tickslock);
-  }
+
+    // mastoras ->>
+    struct proc *p = myproc();
+
+    // Αν υπάρχει τρέχουσα διεργασία και τρέχει, αυξάνουμε τα ticks που κατανάλωσε
+    if(p && p->state == RUNNING){
+      p->ticks_used++;
+    }
+
+    // Όλες οι RUNNABLE διεργασίες αυξάνουν τα wait_ticks (για aging)
+    for(struct proc *q = proc; q < &proc[NPROC]; q++){
+      if(q->state == RUNNABLE){
+        q->wait_ticks++;
+      }
+    }
+    // <<- mastoras
+    
+      wakeup(&ticks);
+      release(&tickslock);
+    }
 
   // ask for the next timer interrupt. this also clears
   // the interrupt request. 1000000 is about a tenth

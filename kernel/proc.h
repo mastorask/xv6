@@ -1,3 +1,7 @@
+// mastoras ->>
+#include "pstat.h"
+// <<- mastoras
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -104,4 +108,15 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // mastoras ->>
+  int priority;      // 0..3 επίπεδο ουράς
+  int ticks_used;    // ticks που έχει χρησιμοποιήσει στο τρέχον quantum
+  int wait_ticks;    // ticks που περιμένει (aging)
+  int quantum;       // quantum για το current priority level
+  // <<- mastoras
 };
+
+// mastoras ->>
+extern struct proc proc[NPROC];
+// <<- mastoras

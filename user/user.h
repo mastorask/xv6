@@ -1,6 +1,11 @@
 #define SBRK_ERROR ((char *)-1)
 
 struct stat;
+// mastoras ->>
+struct pstat;
+int getpinfo(struct pstat *);
+// <<- mastoras
+
 
 // system calls
 int fork(void);

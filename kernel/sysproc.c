@@ -107,3 +107,29 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// mastoras ->>
+uint64
+sys_getpinfo(void)
+{
+  uint64 addr;
+  argaddr(0, &addr);
+
+  struct pstat st;
+  struct proc *p;
+
+  for(int i = 0; i < NPROC; i++){
+    p = &proc[i];
+    st.pid[i] = p->pid;
+    st.ppid[i] = p->parent ? p->parent->pid : 0;
+    st.priority[i] = p->priority;
+    st.state[i] = p->state;
+    safestrcpy(st.name[i], p->name, 16);
+  }
+
+  if(copyout(myproc()->pagetable, addr, (char*)&st, sizeof(st)) < 0)
+    return -1;
+
+  return 0;
+}
+// <<- mastoras

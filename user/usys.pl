@@ -42,3 +42,7 @@ entry("getpid");
 entry("sbrk");
 entry("pause");
 entry("uptime");
+# mastoras ->>
+entry("getpinfo");
+# <<- mastoras
+

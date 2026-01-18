@@ -26,6 +26,22 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+// mastoras ->>
+int quantum_for_level(int level) {
+  if(level == 0) return 4;
+  if(level == 1) return 8;
+  if(level == 2) return 16;
+  return 32;
+}
+
+void update_quantum(struct proc *p){
+  p->quantum = quantum_for_level(p->priority);
+  p->ticks_used = 0;
+  p->wait_ticks = 0;
+}
+
+// <<- mastoras
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -145,6 +161,14 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+  // --- mastoras ->>
+  // MLFQ init
+  p->priority = 0;
+  p->ticks_used = 0;
+  p->wait_ticks = 0;
+  p->quantum = quantum_for_level(p->priority);
+  // <<- mastoras
 
   return p;
 }
@@ -421,46 +445,92 @@ kwait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+
+// mastoras ->>
 void
 scheduler(void)
 {
-  struct proc *p;
   struct cpu *c = mycpu();
-
   c->proc = 0;
+
+  // για round-robin εντός ίδιας προτεραιότητας
+  static int last = 0;
+
   for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting. Then turn them back off
-    // to avoid a possible race between an interrupt
-    // and wfi.
     intr_on();
     intr_off();
 
-    int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
+    // 1) Aging pass: προάγουμε όσα RUNNABLE περιμένουν πολύ
+    for(struct proc *p = proc; p < &proc[NPROC]; p++){
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+      if(p->state == RUNNABLE){
+        int q = quantum_for_level(p->priority);
+        if(p->wait_ticks >= q){
+          if(p->priority > 0)
+            p->priority--;
+          update_quantum(p);
+        }
       }
       release(&p->lock);
     }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      asm volatile("wfi");
+
+    // 2) Βρες την καλύτερη (μικρότερη) priority που υπάρχει σε RUNNABLE
+    int best_prio = 99;
+    for(struct proc *p = proc; p < &proc[NPROC]; p++){
+      acquire(&p->lock);
+      if(p->state == RUNNABLE && p->priority < best_prio)
+        best_prio = p->priority;
+      release(&p->lock);
     }
+
+    if(best_prio == 99){
+      asm volatile("wfi");
+      continue;
+    }
+
+    // 3) Round-robin επιλογή ΜΟΝΟ μέσα στο best_prio, ξεκινώντας κυκλικά μετά το last
+    struct proc *chosen = 0;
+    for(int off = 1; off <= NPROC; off++){
+      int i = (last + off) % NPROC;
+      struct proc *p = &proc[i];
+
+      acquire(&p->lock);
+      if(p->state == RUNNABLE && p->priority == best_prio){
+        chosen = p;   // κρατάμε το lock του chosen
+        last = i;
+        break;
+      }
+      release(&p->lock);
+    }
+
+    if(chosen == 0){
+      // δεν βρέθηκε (σπάνιο), ξανακοιμήσου
+      asm volatile("wfi");
+      continue;
+    }
+
+    // 4) Demotion αν εξάντλησε το quantum
+    if(chosen->ticks_used >= chosen->quantum){
+      if(chosen->priority < 3)
+        chosen->priority++;
+      update_quantum(chosen);
+    }
+
+    // 5) Τώρα που θα τρέξει, μηδένισε την αναμονή του
+    chosen->wait_ticks = 0;
+
+    // 6) Τρέξε τη διεργασία
+    chosen->state = RUNNING;
+    c->proc = chosen;
+
+    swtch(&c->context, &chosen->context);
+
+    c->proc = 0;
+    release(&chosen->lock);
   }
 }
+// <<- mastoras
+
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
